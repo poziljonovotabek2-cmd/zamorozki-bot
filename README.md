@@ -1,34 +1,81 @@
-# «Заморозки» — Telegram-бот
+# «Заморозки» — бот-помощник для дачи
 
-FastAPI Telegram bot with PostgreSQL storage, Redis cache, Russian / Uzbek / English messages, Open‑Meteo forecast and historical advice. It uses long polling by default or a webhook when a public HTTPS URL is configured.
+Telegram-бот предупреждает о возможном заморозке, помогает выбрать осторожные даты посадки и уборки урожая по архиву погоды. Backend написан на Python и FastAPI; места пользователей хранятся в PostgreSQL, ответы Open‑Meteo кешируются в Redis. Доступны русский, узбекский и английский языки.
 
-## Start locally
+## Для кого этот продукт
 
-1. Set `TELEGRAM_BOT_TOKEN` in `.env`. This project is configured for your running Postgres container on Docker network `docker_pg_network`.
-2. Run `docker compose up --build -d`. This starts the bot and Redis and connects the bot to your existing Postgres. With no public URL configured, it uses Telegram long polling. The API listens on `http://localhost:8001`; pgAdmin remains at `http://localhost:8080`.
-3. For webhook mode, set a public HTTPS `WEBHOOK_URL` and `WEBHOOK_SECRET` in `.env`, restart with `docker compose up -d`, then register it with `docker compose exec bot python -m scripts.set_webhook`.
-4. In pgAdmin, connect to database `zamorozki_bot` as user `zamorozki_bot` to inspect the bot tables.
+Для владельцев дач и небольших садов, особенно в Ташкенте и окрестностях. Прогноз погоды сам по себе не всегда помогает вовремя защитить цветущий урюк, рассаду, виноград или наружные трубы: важен конкретный холодный день и понятное действие. Бот переводит прогноз и архив в короткую подсказку, которую можно открыть с телефона.
 
-The Compose file joins the existing external Docker network, where Postgres is reachable as `postgres`. For another Postgres instance, update `DATABASE_URL` in `.env`.
+## Почему бот устроен так
 
-## Bot behavior
+- Пользователь сохраняет место один раз — отправляет геопозицию или пишет город. Дальше прогноз и историческая статистика строятся для этого места.
+- Основные действия находятся на постоянной клавиатуре Telegram: «Прогноз», «Даты посадки», «Изменить место», «Язык» и «Помощь». Это удобнее для садовода, чем помнить команды.
+- Советы приходят словами, а не графиком: что ожидается, когда и что можно подготовить. Кнопки документации Open‑Meteo показываются только в разделе помощи.
+- Прогноз проверяется в окне 24–48 часов, а сохранённые места автоматически проверяются при запуске и затем каждые шесть часов.
 
-- A persistent keyboard offers forecast, planting dates, location, language and Help. Open‑Meteo documentation buttons appear only when the user opens Help or sends `/help`. Location and language are stored by Telegram user ID in PostgreSQL.
-- The location can be sent once as a Telegram location pin or typed as a city. Open‑Meteo geocoding resolves city names.
-- The forecast checks the next 24–48 hours. A minimum of 0°C or lower is a freeze warning; +0.1…+2°C is a ground-frost watch. Suggestions include covering beds, draining exposed pipes and bringing seedlings inside.
-- A background job checks saved locations every six hours and sends at most one alert per location/date/severity.
-- Planting advice uses ten complete calendar years of hourly archive data. It groups hourly samples by Open‑Meteo's local timestamps and counts each year's last spring freeze and first autumn freeze. It gives a conservative 90% date and reports the actual historical share and sample size.
-- Open‑Meteo archive data can be incomplete for recent days; calculations ignore missing dates. If fewer than eight years have usable observations, the bot says that confidence is low.
-- Archived days with fewer than 18 hourly readings are skipped; each season-year needs at least 88 spring days and 87 autumn days to enter the date estimate.
-- Redis caches forecasts for 20 minutes and archive calculations for 30 days.
+## Как запустить
 
-## Freeze definition and limits
+Нужны Docker Compose, бот-токен Telegram, доступный PostgreSQL и Docker-сеть `docker_pg_network`. В текущей конфигурации PostgreSQL доступен в этой сети под именем `postgres`.
 
-The archive's event is **hourly temperature at 2 m <= 0°C**, aggregated to each local calendar day. This is reproducible across years and matches a meteorological air-frost definition. It does not measure leaf or soil temperature: clear, still nights can cool plants at ground level below the 2 m reading. Therefore the live forecast uses +2°C as a precautionary watch threshold. Weather grids are estimates, not a thermometer at the dacha; microclimate, elevation and forecast error can change the result. The 90% statistic describes the selected historical sample, not a guarantee.
+```bash
+git clone https://github.com/poziljonovotabek2-cmd/zamorozki-bot.git
+cd zamorozki-bot
+cp .env.example .env
+```
 
-## Links
+Откройте `.env` и укажите `TELEGRAM_BOT_TOKEN` и правильный `DATABASE_URL`. Используйте роль и базу PostgreSQL, которым разрешено создавать таблицы. Например:
 
-- [Open‑Meteo forecast documentation](https://open-meteo.com/en/docs)
-- [Open‑Meteo historical weather API](https://open-meteo.com/en/docs/historical-weather-api)
+```dotenv
+TELEGRAM_BOT_TOKEN=токен_от_BotFather
+DATABASE_URL=postgresql+asyncpg://пользователь:пароль@postgres:5432/имя_базы
+```
 
-No API key is required for the Open‑Meteo endpoints used here. Check Open‑Meteo's current terms and attribution requirements before public/commercial deployment.
+Не публикуйте `.env` и не отправляйте токен в чат. Файл `.env` исключён из Git.
+
+Запустите сервисы:
+
+```bash
+docker compose up --build -d
+```
+
+FastAPI будет доступен на `http://localhost:8001`, проверка состояния — на `http://localhost:8001/health`. PostgreSQL должен быть заранее подключён к сети `docker_pg_network`; если сеть ещё не создана, создайте её командой `docker network create docker_pg_network` и подключите к ней PostgreSQL.
+
+По умолчанию бот получает сообщения через Telegram long polling. Для webhook задайте публичный HTTPS `WEBHOOK_URL` и `WEBHOOK_SECRET` в `.env`, перезапустите Compose и зарегистрируйте endpoint:
+
+```bash
+docker compose exec bot python -m scripts.set_webhook
+```
+
+## Что нажать, чтобы проверить бота
+
+1. Откройте Telegram-бота и отправьте `/start`.
+2. Выберите русский, узбекский или английский язык в появившихся кнопках.
+3. Отправьте геопозицию участка кнопкой внизу или напишите город, например `Ташкент, Узбекистан`. Бот сохранит место.
+4. Нажмите **«Прогноз»**. Чтобы проверить исторический совет, нажмите **«Даты посадки»**. Ожидаемого заморозка в ближайшие сутки может не быть — тогда прогноз сообщит, что опасного похолодания не видно.
+5. Нажмите **«Помощь»**, чтобы увидеть пороги, ограничения и две кнопки со ссылками на документацию Open‑Meteo.
+6. Нажмите **«Изменить место»** или **«Язык»**, чтобы проверить остальные действия клавиатуры.
+
+Также доступны команды `/forecast`, `/planting`, `/help`, `/location` и `/language`.
+
+## Какие решения приняты
+
+- **Заморозок в архиве:** минимальная часовая температура воздуха на высоте 2 м за местный календарный день `≤ 0°C`. Это воспроизводимый метеорологический порог, но он не измеряет температуру листьев или почвы.
+- **Раннее предупреждение:** если минимум прогноза на 2 м в ближайшем 24–48-часовом окне `≤ 0°C`, бот сообщает о риске заморозка. При температуре выше 0 и до `+2°C` включительно он предупреждает о возможном приземном инее: у поверхности может быть холоднее.
+- **Исторический совет:** для каждого из десяти предыдущих календарных лет берутся последняя весенняя и первая осенняя даты заморозка. Весенняя граница — следующий день после 90-го процентиля последних весенних заморозков; осенняя подготовка — день перед 10-м процентилем первых осенних заморозков. В ответе показывается фактическая доля лет, когда граница была безопасной.
+- **Часовой пояс:** используются местные временные метки, возвращённые Open‑Meteo (`timezone=auto`). Поэтому сутки для подсчёта архивного минимума и календарные даты соответствуют месту пользователя.
+- **Неполный архив:** дни менее чем с 18 часовыми наблюдениями пропускаются. В расчёт попадает только сезон-год, где хватает полных дней; бот показывает число пригодных лет и отдельно предупреждает, если их меньше восьми.
+- **Кеш:** прогноз хранится в Redis 20 минут, архив — 30 дней.
+
+## Что сознательно не входит в эту версию
+
+- Бот не обещает точную температуру на конкретной грядке: у него нет датчика на участке, а микроклимат, облачность, высота и погрешность модели меняют результат.
+- Порог один для всех растений. Отдельных порогов для урюка, винограда, рассады и труб, а также персонального календаря культур пока нет.
+- Бот не строит графики и не пытается предсказать погоду дальше доступного прогноза Open‑Meteo. Архив старше десяти последних полных лет в советах не используется.
+- Историческая доля — описание выбранной выборки, а не гарантия того, что этот сезон будет таким же.
+
+## Источники погоды
+
+- [Open‑Meteo: прогноз](https://open-meteo.com/en/docs)
+- [Open‑Meteo: исторический архив](https://open-meteo.com/en/docs/historical-weather-api)
+
+Для используемых запросов ключ API не требуется. Перед публичным или коммерческим развёртыванием проверьте актуальные условия Open‑Meteo и требования к атрибуции.
